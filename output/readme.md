@@ -1,0 +1,1 @@
+The directory `PrepareLanding` (at the same level) will contain the whole mod if it is successfuly built.

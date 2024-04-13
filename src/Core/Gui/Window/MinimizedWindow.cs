@@ -1,0 +1,187 @@
+﻿using System;
+using PrepareLanding.Core.Extensions;
+using UnityEngine;
+using Verse;
+
+namespace PrepareLanding.Core.Gui.Window
+{
+    public class MinimizedWindow : Verse.Window
+    {
+        private readonly MinimizableWindow _parentWindow;
+
+        private readonly Listing_Standard _listingStandard;
+
+        private bool _minimizedWindowHasAddedContent;
+
+        public event Action<Listing_Standard, Rect> AddMinimizedWindowContent;
+
+        public MinimizedWindow(MinimizableWindow parentWindow, string windowLabel = null)
+        {
+            _parentWindow = parentWindow;
+
+            if (windowLabel.NullOrEmpty())
+                WindowLabel = !_parentWindow.optionalTitle.NullOrEmpty()
+                    ? _parentWindow.optionalTitle
+                    : (string) "PLMWMINW_MinmizedWindow".Translate();
+
+            doCloseX = false;
+            doCloseButton = false;
+            //closeOnEscapeKey = false; // from 0.18
+            preventCameraMotion = false;
+            absorbInputAroundWindow = false;
+            draggable = true;
+
+            WindowLabel = windowLabel;
+
+            // unless visible, consider it closed by default
+            Closed = true;
+
+            _listingStandard = new Listing_Standard();
+        }
+
+        public bool Closed { get; private set; }
+
+        public override Vector2 InitialSize => new Vector2(180f, 80f);
+
+        protected override float Margin => 5f;
+
+        public string WindowLabel { get; set; }
+
+        public event Action OnMinimizedWindowClosed = delegate { };
+
+        public override void DoWindowContents(Rect inRect)
+        {
+            var rect = inRect;
+
+            // set up column size
+            _listingStandard.ColumnWidth = inRect.width;
+
+            // begin drawing
+            _listingStandard.Begin(rect);
+
+            // get a Rect for the next label (without actually 'allocating' it in the Listing_Standard)
+            var nextRect = _listingStandard.VirtualRect(30f);
+            // split the Rect
+            var labelRect = nextRect.LeftPart(0.9f);
+            var buttonRect = nextRect.RightPart(0.1f);
+
+            // add 'title' for the minimized window
+            _listingStandard.GetRect(30f);
+            GenUI.SetLabelAlign(TextAnchor.MiddleCenter);
+            Verse.Widgets.Label(labelRect, WindowLabel);
+            GenUI.ResetLabelAlign();
+
+            // add 'maximize' button
+            if (Verse.Widgets.ButtonText(buttonRect, "▲"))
+                Close();
+
+            TooltipHandler.TipRegion(buttonRect, "PLMWMINW_MaximizeWindow".Translate());
+
+            // make some space before eventual content
+            _listingStandard.GapLine(6f);
+
+            // subscribers can add new content to the minimized window.
+            AddMinimizedWindowContent?.Invoke(_listingStandard, inRect);
+
+            // check if the height changed (meaning new content was added)
+            if (Math.Abs(windowRect.height - InitialSize.y) > 1f && !_minimizedWindowHasAddedContent)
+            {
+                // recalculate y position
+                windowRect.y = (UI.screenHeight - windowRect.height) / 2;
+
+                // do it only once
+                _minimizedWindowHasAddedContent = true;
+            }
+
+            // end drawing
+            _listingStandard.End();
+        }
+
+        protected override void SetInitialSizeAndPosition()
+        {
+            // reposition on the bottom left of the screen but above the other utilities
+            windowRect = new Rect(UI.screenWidth - InitialSize.x - 40f, UI.screenHeight - InitialSize.y - 80f,
+                InitialSize.x, InitialSize.y);
+            windowRect = windowRect.Rounded();
+        }
+
+        public override void Close(bool doCloseSound = true)
+        {
+            // close this minimized window
+            base.Close(doCloseSound);
+
+            // display the parent (add it to the window stack)
+            Find.WindowStack.Add(_parentWindow);
+
+            // tell subscribers that this minimized window has been closed
+            OnMinimizedWindowClosed.Invoke();
+
+            Closed = true;
+            _minimizedWindowHasAddedContent = false;
+        }
+
+        public override void PreOpen()
+        {
+            base.PreOpen();
+            Closed = false;
+            _minimizedWindowHasAddedContent = false;
+        }
+
+        public override void WindowOnGUI()
+        {
+            if (!_parentWindow.IsWindowValidInContext)
+            {
+                _parentWindow.ForceClose();
+                return;
+            }
+
+            base.WindowOnGUI();
+        }
+
+        public override void WindowUpdate()
+        {
+            base.WindowUpdate();
+
+            /*
+             * Use F (up) and V (down) keys to navigate the list of items in the filtered list.
+             */
+
+            if (!Input.GetKeyDown(KeyCode.F) && !Input.GetKeyDown(KeyCode.V)) return;
+
+            var matchingTiles = PrepareLanding.Instance.TileFilter.AllMatchingTiles;
+            var matchingTilesCount = matchingTiles.Count;
+            if (matchingTilesCount == 0)
+                return;
+
+            var mainWindow = _parentWindow as MainWindow;
+
+            if (!(mainWindow?.TabController.TabById("FilteredTiles") is TabFilteredTiles tabFilteredTiles))
+                return;
+
+            if (Input.GetKeyDown(KeyCode.F))
+            {
+                // Log.Message("[PL] PageUp pressed on minimized window !!!");
+
+                tabFilteredTiles.SelectedTileIndex--;
+                if (tabFilteredTiles.SelectedTileIndex < 0)
+                    tabFilteredTiles.SelectedTileIndex = 0;
+
+            }
+            else if (Input.GetKeyDown(KeyCode.V))
+            {
+                // Log.Message("[PL] PageDown pressed on minimized window !!!");
+
+                tabFilteredTiles.SelectedTileIndex++;
+                if (tabFilteredTiles.SelectedTileIndex >= matchingTilesCount)
+                    tabFilteredTiles.SelectedTileIndex = matchingTilesCount - 1;
+
+            }
+
+            // note: changing the selected tile in the TabFilteredTiles doesn't help to actually select it...
+            //  as the GUI awaits for a mouse click. So the only option is to actually jump to the tile from here.
+            Find.WorldInterface.SelectedTile = matchingTiles[tabFilteredTiles.SelectedTileIndex];
+            Find.WorldCameraDriver.JumpTo(Find.WorldGrid.GetTileCenter(Find.WorldInterface.SelectedTile));
+
+        }
+    }
+}
